@@ -1,22 +1,39 @@
 import gffutils
-import os, sys
 from Bio import SeqIO
+from collections import Counter
 
 # ______________GENE ANNOTATION FUNCTIONS______________
 class GeneAnnotation:
-    def __init__(self, gtf_file_path, ref_fasta_file_path):
-        self.gtf_db_file_path = gtf_file_path
+    def __init__(self, gtf_file_path=None, ref_fasta_file_path=None, gene_fasta_file_path=None):
+        self.gtf_file_path = gtf_file_path
         self.ref_fasta_file_path = ref_fasta_file_path
+        self.gene_fasta_file_path = gene_fasta_file_path
+        self.gtb_db_file_path = 'temp.db'
         self.index = {}
     
     
-    def create_index(self, gtf_file_path, ref_fasta_file_path, gtf_db_file_path = 'temp.db'):
-        db = gffutils.create_db(gtf_file_path, dbfn=self.gtb_db_file_path, force=True, keep_order=True, merge_strategy='merge', sort_attribute_values=True)
-        record = SeqIO.read(self.ref_fasta_file_path, "fasta")
-        # get the index number location, go to the transcript, get the sequence, store it in a dict 
-        # dict = {gene strand -> gene id}
-        
+    def create_index(self, kmer_len, gtb_db_file_path=None):
+        # if self.gtf_file_path:
+        #     if gtb_db_file_path:
+        #         self.gtb_db_file_path = gtb_db_file_path
+        #     db = gffutils.create_db(self.gtf_file_path, dbfn=self.gtb_db_file_path, force=True, keep_order=True, merge_strategy='merge', sort_attribute_values=True)
+        #     record = SeqIO.read(self.ref_fasta_file_path, "fasta")
+        #     # get the index number location, go to the transcript, get the sequence, store it in a dict 
+        #     # dict = {gene strand -> gene id}
+        #     # for i in db.children(gene, featuretype='mRNA', order_by='start'):
+        #     #     record[]
 
+        #     # All the transcripts of basic GENCODE v19
+        #     all_basic_txs = (
+        #         tx for tx in db.all_features(featuretype='transcript') 
+        #         if 'tag' in tx.attributes and 'basic' in tx.attributes['tag']
+        #     )
+        if self.gene_fasta_file_path:
+            for record in SeqIO.parse(self.gene_fasta_file_path, 'fasta'):
+                identifier = record.id
+                description = record.description
+                for i in range (0, len )
+                self.index[record] = {'id': identifier, 'desc': description}
 
     
     def find_gene(self, gene_name):
