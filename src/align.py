@@ -1,23 +1,26 @@
 from Bio import SeqIO
 from collections import defaultdict
-import copy
+from itertools import product
+from tqdm import tqdm
 
-class Naive:
-    def __init__(self, index_file, reads_file, kmer_len):
+class Kallisto:
+    def __init__(self, index_file, reads_file, kmer_len, single_forgiving = False, debug = False):
         self.index_file = index_file
         self.reads_file = reads_file
         self.kmer_len = kmer_len
+        self.single_forgiving = single_forgiving
+        self.debug = debug
 
-        self.debrujin = defaultdict(list)
-        self.kmer_to_id = defaultdict(list)
+        self.debrujin = defaultdict(set)
+        self.kmer_to_id = defaultdict(set)
         self.equivalence_counts = {}
 
     def generate_kmers(self, sequence):
         kmers = [sequence[i: i+self.kmer_len] for i in range(len(sequence) - self.kmer_len + 1)]
         return kmers
 
-    def create_index(self):
-        for record in SeqIO.parse(self.index_file, 'fasta'):
+    def build_debrujin_graph(self):
+        for record in tqdm(SeqIO.parse(self.index_file, 'fasta')):
 
             # Extract individual parts of the FASTA record
             identifier = record.id
@@ -27,50 +30,34 @@ class Naive:
             forward_kmers = self.generate_kmers(sequence)
             reverse_kmers = self.generate_kmers(reverse_seq)
             
-            # get all the k_mers
-            for i in range(0, len(sequence) - self.kmer_len - 1):
-                kmer = sequence[i:i+self.kmer_len]
-                kmer_next = sequence[i + 1:i + 1+self.kmer_len]
-                r_kmer = reverse_seq[i:i+self.kmer_len]
-                r_kmer_next = reverse_seq[i + 1:i + 1+self.kmer_len]
-                if kmer in self.debrujin['forward']:
-                    self.debrujin['forward'][kmer]['ids'].add(identifier)
-                    self.debrujin['forward'][kmer]['next'].add(kmer_next)
-                elif kmer in self.debrujin['reverse']:
-                    self.debrujin['reverse'][kmer]['ids'].add(identifier)
-                    self.debrujin['reverse'][kmer]['next'].add(kmer_next)
-                else:
-                    self.debrujin['forward'][kmer] = {'ids':None, 'next': None}
-                    self.debrujin['reverse'][kmer] = {'ids':None, 'next': None}
-                    self.debrujin['forward'][kmer]['ids'] = {identifier}
-                    self.debrujin['reverse'][kmer]['ids'] = {identifier}
-                    self.debrujin['forward'][kmer]['next'] = {kmer_next}
-                    self.debrujin['reverse'][kmer]['next'] = {kmer_next}
-                    
-                if r_kmer in self.debrujin['forward']:
-                    self.debrujin['forward'][r_kmer]['ids'].add(identifier)
-                    self.debrujin['forward'][r_kmer]['next'].add(r_kmer_next)
-                elif r_kmer in self.debrujin['reverse']:
-                    self.debrujin['reverse'][r_kmer]['ids'].add(identifier)
-                    self.debrujin['reverse'][r_kmer]['next'].add(r_kmer_next)
-                else:
-                    self.debrujin['forward'][r_kmer] = {'ids':None, 'next': None}
-                    self.debrujin['reverse'][r_kmer] = {'ids':None, 'next': None}
-                    self.debrujin['forward'][r_kmer]['ids'] = {identifier}
-                    self.debrujin['reverse'][r_kmer]['ids'] = {identifier}
-                    self.debrujin['forward'][r_kmer]['next'] = {r_kmer_next}
-                    self.debrujin['reverse'][r_kmer]['next'] = {r_kmer_next}
+            for kmer in forward_kmers + reverse_kmers:
+                self.kmer_to_id[kmer].add(identifier)
+                if kmer not in self.debrujin:
+                    self.debrujin[kmer] = []
+                prefix = kmer[:-1] #AC-
+                suffix = kmer[1:] #-CT
+                self.debrujin[prefix].add(suffix)
         print('Successfully created index.')
     
-    def process_reads_file(self, early_stop=0):
+    def process_reads_file(self, early_stop=0, skipping=False):
         count = 0
-        for record in SeqIO.parse(self.reads_file, 'fasta'):
+        for record in tqdm(SeqIO.parse(self.reads_file, 'fasta')):
+            identifier = record.id
             read = record.seq
             reverse_seq = read.reverse_complement()
-            equiv_classes = self.align_read(read, 0, 'forward')
-            r_equiv_classes = self.align_read(reverse_seq, 0, 'reverse')
-            equiv_classes = str(set.union(*equiv_classes))[1:-1]
-            r_equiv_classes = str(set.union(*r_equiv_classes))[1:-1]
+            
+            equiv_classes = self.align_read(read)
+            r_equiv_classes = self.align_read(reverse_seq)
+            
+            if len(equiv_classes) > 0:
+                equiv_classes = (str(equiv_classes)[1:-1]).replace('\'', '')
+            else:
+                equiv_classes = "NA"
+            if len(r_equiv_classes) > 0:
+                r_equiv_classes = (str(r_equiv_classes)[1:-1]).replace('\'', '')
+            else:
+                r_equiv_classes = "NA"
+
             if equiv_classes in self.equivalence_counts:
                 self.equivalence_counts[equiv_classes] += 1
             else:
@@ -79,71 +66,71 @@ class Naive:
                 self.equivalence_counts[r_equiv_classes] += 1
             else:
                 self.equivalence_counts[r_equiv_classes] = 1
-            if count % 50 == 0:
-                print(f"Iteration: {count}")
+            if self.debug:
+                print(f"Forward strand: {equiv_classes}\nReverse strand: {r_equiv_classes}")
+                print(identifier)
             count += 1
             if count == early_stop:
                 break
+        print("")
 
     
-    def align_read(self, read, index, direction, path = [], equiv_classes=[]):
+    def align_read(self, read, skipping):
         """
-        for getting a set of equivalence classes for a read (recursive)
-        @param path (array): array of equivalence classes (a set)
+        for getting a set of equivalence classes for a read 
+        @param read (string)
+        @return (set) set of equivalence classes
         """
-        #base case
-        kmer = read[index:index + self.kmer_len]
-        if index == len(read) - self.kmer_len:
-            possible_kmers = self.process_kmer(kmer, direction)
-            equiv_class = []
+        equivalence_classes = []
+        kmers = self.generate_kmers(read)
+
+        for kmer in kmers:
+            possible_kmers = self.process_kmer(kmer)
+            current_classes = set()
+            #take the union to get all the possible equivalence classes
             for p_kmer in possible_kmers:
-                curr_equiv_classes = copy.deepcopy(path)
-                if p_kmer in self.debrujin[direction]:
-                    curr_equiv_classes.append(self.debrujin[direction][p_kmer]['ids'])
-                    equiv_class.append(set.intersection(*curr_equiv_classes))
-            equiv_classes.append(set.union(*equiv_class))
-        else:
-            next_nucleotide = read[index+self.kmer_len]
-            #need to get the first position of it. then subsequently check only the next values of the current kmer
-            possible_kmers = self.process_kmer(kmer, direction)
-            for p_kmer in possible_kmers:
-                if p_kmer in self.debrujin[direction]:
-                    next_p_kmer = p_kmer[1:] + next_nucleotide
-                    if next_p_kmer in self.debrujin[direction]:
-                        path.append(self.debrujin[direction][p_kmer]['ids'])
-                        self.align_read(read, index + 1, direction, path, equiv_classes)
-                        path.pop()
-        return equiv_classes
+                prefix = p_kmer[:-1]
+                suffix = p_kmer[1:]
+
+                if prefix in self.debrujin and suffix in self.debrujin[prefix]:
+                    if self.debug: 
+                        print(f"Kmer: {p_kmer} Ids: {self.kmer_to_id[p_kmer]}")
+                    current_classes.update(self.kmer_to_id[p_kmer])
+            if not equivalence_classes:
+                equivalence_classes = current_classes
+            else:
+                equivalence_classes &= current_classes
             
-        #get union of all sets in equiv_classes array
-        # return set.union(*equiv_classes)
+        #get intersection of all sets in equiv_classes array
+        return equivalence_classes
     
-    def process_kmer(self, kmer, direction):
+    def process_kmer(self, kmer):
         """
-        for filtering errors, either one is returned (true match), or multiple ('N' or single mismatch), 
-        or 0 matches are found
+        for all possibilities of kmers
         @param kmer (string): kmer string
-        @param direction (string): 'forward' or 'reverse'
         @returns 
-            array of kmers that are in the debrujin graph (recall there is only one of kmer in graph)
+            set of all kmer combinations
         """
         #kmer contains an N, potentially can have many possibilities, need to keep track of all paths
-        if kmer in self.debrujin[direction]:
-            return [kmer]
-        kmers = []
-        if 'N' in kmer and kmer != "N" * self.kmer_len:
+        kmers = set()
+        if 'N' in kmer:
+            positions = [i for i, base in enumerate(kmer) if base == 'N']
             nucleotides = ['A', 'T', 'G', 'C']
-            kmers = [kmer.replace('N', nucleotide) for nucleotide in nucleotides if kmer.replace('N', nucleotide) in self.debrujin[direction]]
+            for replacements in product('ATGC', repeat=len(positions)):
+                new_kmer = list(kmer)
+                for pos, replacement in zip(positions, replacements):
+                    new_kmer[pos] = replacement
+                kmers.add(''.join(new_kmer))
         else:
+            kmers.add(kmer)
+        if self.single_forgiving:
             nucleotides = {'A' : 'T', 'T' : 'A', 'G' : 'C', 'C' : 'G'}
-            kmers = []
             for i in range(self.kmer_len):
                 replaced_kmer = None
                 if i == self.kmer_len - 1:
                     replaced_kmer = kmer[:i] + nucleotides[kmer[i]] + kmer[i+1:]
                 else:
                     replaced_kmer = kmer[:i] + nucleotides[kmer[i]] + kmer[i+1:]
-                if replaced_kmer in self.debrujin[direction]:
-                    kmers.append(replaced_kmer)
+                kmers.add(replaced_kmer)
         return kmers
     
