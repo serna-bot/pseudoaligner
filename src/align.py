@@ -38,7 +38,7 @@ class Kallisto:
                 suffix = kmer[1:] #-CT
                 self.debrujin[prefix].add(suffix)
         print('Successfully created index.')
-    
+        
     def process_reads_file(self, early_stop=0, skipping=False):
         count = 0
         for record in tqdm(SeqIO.parse(self.reads_file, 'fasta')):
@@ -75,7 +75,7 @@ class Kallisto:
         print("")
 
     
-    def align_read(self, read, skipping):
+    def align_read(self, read):
         """
         for getting a set of equivalence classes for a read 
         @param read (string)
@@ -87,6 +87,7 @@ class Kallisto:
         for kmer in kmers:
             possible_kmers = self.process_kmer(kmer)
             current_classes = set()
+            
             #take the union to get all the possible equivalence classes
             for p_kmer in possible_kmers:
                 prefix = p_kmer[:-1]
