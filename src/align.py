@@ -32,8 +32,6 @@ class Kallisto:
             
             for kmer in forward_kmers + reverse_kmers:
                 self.kmer_to_id[kmer].add(identifier)
-                if kmer not in self.debrujin:
-                    self.debrujin[kmer] = []
                 prefix = kmer[:-1] #AC-
                 suffix = kmer[1:] #-CT
                 self.debrujin[prefix].add(suffix)
@@ -46,8 +44,8 @@ class Kallisto:
             read = record.seq
             reverse_seq = read.reverse_complement()
             
-            equiv_classes = self.align_read(read)
-            r_equiv_classes = self.align_read(reverse_seq)
+            equiv_classes = self.align_read(read, skipping)
+            r_equiv_classes = self.align_read(reverse_seq, skipping)
             
             if len(equiv_classes) > 0:
                 equiv_classes = (str(equiv_classes)[1:-1]).replace('\'', '')
@@ -75,7 +73,7 @@ class Kallisto:
         print("")
 
     
-    def align_read(self, read):
+    def align_read(self, read, skipping):
         """
         for getting a set of equivalence classes for a read 
         @param read (string)
@@ -84,7 +82,8 @@ class Kallisto:
         equivalence_classes = []
         kmers = self.generate_kmers(read)
 
-        for kmer in kmers:
+
+        for kmer in kmers[1:]:
             possible_kmers = self.process_kmer(kmer)
             current_classes = set()
             
